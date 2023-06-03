@@ -1,14 +1,26 @@
-from datetime import datetime
+import os
 
 import tushare
-from matplotlib import pyplot as plt
+from dotenv import load_dotenv
 
-TOKEN = "fee4be37c99f362790f575eb3bf8d6d87262a9923982b7fd3e3d6cc5"
+from data_management.consts import Stock
+from utils import get_recent_trading_day
+
+load_dotenv()
+TOKEN = os.environ.get("TUSHARE_TOKEN")
 
 tushare.set_token(TOKEN)
 pro = tushare.pro_api()
 
 
-security_list = pro.stock_basic(exchange='', list_status='L', fields='ts_code,symbol,name,area,industry,list_date')
-print(security_list)
-security_list.to_csv("security_list.csv", index=False)
+def update_supply(stock: Stock):
+    fields = "total_share, float_share, turn_over, trade_date"
+    end_date = get_recent_trading_day().strftime("%Y%m%d")
+    print(end_date)
+    # data = pro.bak_daily(ts_code=stock.ts_code, start_date="19980101", end_date=end_date, fields=fields)
+    # data.to_csv("002273supply.csv", index=False)
+
+
+if __name__ == '__main__':
+    stock = Stock("002273", "SZ")
+    update_supply(stock)
