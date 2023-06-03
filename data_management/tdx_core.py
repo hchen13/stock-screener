@@ -135,17 +135,21 @@ def update_stock_candlesticks(stock: Stock, interval: str= '1d'):
     pointer = 0
     tick = datetime.now()
     while True:
-        data = api.get_security_bars(tdx_kline_type[interval], stock.market.value, stock.symbol, pointer, 800)
-        ohlcv += data
-        data = api.to_df(data)
-        if data.empty:
+        data_list = api.get_security_bars(tdx_kline_type[interval], stock.market.value, stock.symbol, pointer, 800)
+        data = api.to_df(data_list)
+        if len(data) == 0 or data is None or data.empty or data_list is None or len(data_list) == 0:
             break
+        ohlcv += data_list
         pointer += len(data)
         min_datetime = datetime.strptime(data.iloc[0].datetime, "%Y-%m-%d %H:%M").replace(tzinfo=tz_cn)
         if min_datetime <= recent_datetime:
             break
     ohlcv = api.to_df(ohlcv)
-    ohlcv['datetime'] = ohlcv['datetime'].apply(lambda s: datetime.strptime(s, "%Y-%m-%d %H:%M").replace(tzinfo=tz_cn))
+    try:
+        ohlcv['datetime'] = ohlcv['datetime'].apply(lambda s: datetime.strptime(s, "%Y-%m-%d %H:%M").replace(tzinfo=tz_cn))
+    except Exception as e:
+        logging.error(f"Error {e}: stock = {stock} ohlcv = {ohlcv}")
+        return
     # sort ohlcv by datetime field
     ohlcv = ohlcv.sort_values(by='datetime', ascending=True)
     # drop columns except datetime, open, high, low, close, vol, amount
