@@ -1,0 +1,8 @@
+# all the common python ignore patterns here
+#
+.env
+.idea/
+.vscode/
+__pycache__/
+*.py[cod]
+*.csv
