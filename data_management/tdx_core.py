@@ -1,36 +1,19 @@
 import logging
-from datetime import timedelta, datetime
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-from pytdx.config.hosts import hq_hosts
 from pytdx.hq import TdxHq_API
 from pytdx.params import TDXParams
-from pytdx.util.best_ip import ping
 from tqdm import tqdm
 
+from data_management import best_host
 from data_management.consts import Stock, MARKET
-from data_management.influx_engine import get_recent_candlestick_record, write_candlesticks
+from data_management.influx_engine import get_recent_candlestick_record, write_candlesticks, write_supply
 from utils import tz_cn, get_recent_trading_day
 
-
-def find_best_host():
-    print("===== Finding best host =====")
-    best = timedelta(seconds=10)
-    for name, ip, port in hq_hosts:
-        print(f"Testing {name}")
-        r = ping(ip, port)
-        if r < best:
-            best = r
-            best_name, best_host, best_port = name, ip, port
-        if r < timedelta(seconds=0.1):
-            print(f"Host {name} Latency: {r}\n===========================\n")
-            return name, ip, port
-    return best_name, best_host, best_port
-
-
 api = TdxHq_API()
-best_host = find_best_host()
+
 _stocklist_save_path = Path(__file__).parent / 'stocklist.tdx.csv'
 tdx_kline_type = {
     '1m': TDXParams.KLINE_TYPE_1MIN,
@@ -162,6 +145,15 @@ def update_stock_candlesticks(stock: Stock, interval: str= '1d'):
     logging.debug(f"读取历史数据耗时 {read_elapse}, 下载数据耗时 {download_elapse}, 写入数据耗时 {write_elapse}")
 
 
+def update_supply(stock: Stock):
+    with api.connect(best_host[1], best_host[2]):
+        data = api.to_df(api.get_finance_info(stock.market.value, stock.symbol))
+        circulating_supply = data.iloc[0].liutongguben
+        total_supply = data.iloc[0].zongguben
+        recent_trading_day = get_recent_trading_day(offline=False)
+        write_supply(stock, total_supply, circulating_supply, recent_trading_day)
+
+
 if __name__ == '__main__':
     pd.set_option("display.max_columns", None)
     logging.basicConfig(
@@ -169,4 +161,6 @@ if __name__ == '__main__':
         format='%(asctime)s %(levelname)s %(filename)s:%(lineno)s %(message)s',
         force=True
     )
-    update_candlesticks(interval='1d')
+    # update_candlesticks(interval='1d')
+    stock = Stock(code='002273', market="SZ")
+    update_supply(stock)

@@ -78,3 +78,23 @@ async def write_candlesticks(stock: Stock, interval, candlesticks: pd.DataFrame)
         }
         data_points.append(data_point)
     await client.write(data_points)
+
+
+@jupyter_compatible
+async def write_supply(stock: Stock, total_supply, circulating_supply, trading_date):
+    tags = {
+        "symbol": stock.symbol,
+        "code": stock.code,
+        "exchange": stock.market.name,
+    }
+    fields = {
+        "total_supply": total_supply,
+        "circulating_supply": circulating_supply,
+    }
+    data_point = {
+        "measurement": "supply",
+        "tags": tags,
+        "fields": fields,
+        "time": trading_date,
+    }
+    await client.write(data_point)

@@ -3,6 +3,8 @@ from datetime import timedelta, timezone, datetime
 from IPython import get_ipython
 from pytdx.hq import TdxHq_API
 
+from data_management import best_host
+
 
 def check_environment():
     try:
@@ -34,7 +36,6 @@ def get_recent_trading_day(check_date: datetime=None, offline=False) -> datetime
 
     # 如果是在线模式，通过通达信获取上证指数行情，找到最近的交易日
     api = TdxHq_API()
-    from data_management.tdx_core import best_host
     with api.connect(best_host[1], best_host[2]):
         ex, code = 1, "000001"
         pointer = 0
@@ -52,4 +53,5 @@ def get_recent_trading_day(check_date: datetime=None, offline=False) -> datetime
             except IndexError:
                 pass
             pointer += 800
+        return datetime(1970, 1, 1, tzinfo=tz_utc)
 
