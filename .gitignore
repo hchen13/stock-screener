@@ -7,3 +7,6 @@ __pycache__/
 *.py[cod]
 *.csv
 *.log
+play.py
+*.zip
+data_management/_cache/
