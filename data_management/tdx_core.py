@@ -191,8 +191,6 @@ def is_financial_updated(filename, hash):
 
 def save_supply_history(financials, stocks, financial_datetime):
     for stock in stocks:
-        if stock.code != "002273":
-            continue
         try:
             report = financials.loc[stock.code]
         except KeyError:
@@ -202,7 +200,6 @@ def save_supply_history(financials, stocks, financial_datetime):
         if circulating_supply == 0 and total_supply != 0:
             circulating_supply = total_supply
         write_supply(stock, total_supply, circulating_supply, financial_datetime)
-        break
 
 
 def update_supply_history():
