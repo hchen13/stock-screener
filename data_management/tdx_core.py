@@ -158,11 +158,11 @@ def update_supply(stock: Stock):
     """ 获取股票当前流通股本和总股本并更新数据 """
     with api.connect(best_host[1], best_host[2]):
         data = api.to_df(api.get_finance_info(stock.market.value, stock.symbol))
-        print(data)
         circulating_supply = data.iloc[0].liutongguben
         total_supply = data.iloc[0].zongguben
-        print(f"{total_supply:,} {circulating_supply:,}")
         recent_trading_day = get_recent_trading_day(offline=False)
+        logging.debug(f"更新{stock.symbol}流通股本和总股本数据，最近交易日为{recent_trading_day}： \n"
+                      f"流通股本: {circulating_supply:,}, 总股本:{total_supply:,}")
         write_supply(stock, total_supply, circulating_supply, recent_trading_day)
 
 
@@ -183,9 +183,8 @@ def is_financial_updated(filename, hash):
         recorded_hash = record.iloc[0]['hash']
         logging.debug(f"Financial file {filename} recorded hash and current hash: \n"
                       f"{recorded_hash} {hash}\n"
-                      f"diff = {recorded_hash == hash}")
+                      f"identical = {recorded_hash == hash}")
         return recorded_hash != hash
-        # return (record['hash'] != hash).all().item()
     return True
 
 
