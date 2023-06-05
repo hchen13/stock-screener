@@ -8,6 +8,7 @@ import pandas as pd
 from pytdx.crawler.history_financial_crawler import HistoryFinancialListCrawler, HistoryFinancialCrawler
 from pytdx.hq import TdxHq_API
 from pytdx.params import TDXParams
+from pytdx.reader import HistoryFinancialReader
 from tqdm import tqdm
 
 from data_management import best_host
@@ -210,21 +211,20 @@ def update_supply_history():
     financial_list = pd.DataFrame(list_crawler.fetch_and_parse())
     data_crawler = HistoryFinancialCrawler()
     stocks = get_stock_list()
-    for i, (idx, row) in enumerate(financial_list.iterrows()):
-        logging.info(f"正在处理历史财务数据文件({i + 1}/{len(financial_list)}): {row.filename}")
+    for i, (idx, row) in tqdm(enumerate(financial_list.iterrows()), total=len(financial_list), desc="处理历史财务数据", disable=False):
         financial_datetime = parse_financial_date(row.filename)
         if financial_datetime > datetime.now(tz_cn):
             continue
-        if not is_financial_updated(row.filename, row.hash):
-            continue
         download_path = financial_archive_dir / row.filename
-        financials = data_crawler.fetch_and_parse(
-            filename=row.filename,
-            download_path=str(download_path),
-            filesize=row.filesize
-        )
-        financials = data_crawler.to_df(financials)
+        if is_financial_updated(row.filename, row.hash):
+            data_crawler.fetch_and_parse(
+                filename=row.filename,
+                path_to_download=str(download_path),
+                filesize=row.filesize
+            )
+        financials = HistoryFinancialReader().get_df(str(download_path))
         if financials is None:
+            logging.debug(f"Error: financials is None, filename = {row.filename}")
             continue
         save_supply_history(financials, stocks=stocks, financial_datetime=financial_datetime)
     financial_list.to_csv(str(financial_list_checksum_path), index=False)
