@@ -10,3 +10,4 @@ __pycache__/
 play.py
 *.zip
 data_management/_cache/
+data_management/notes/

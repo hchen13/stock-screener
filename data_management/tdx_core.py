@@ -1,8 +1,11 @@
 import logging
+import os
+import re
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from pytdx.crawler.history_financial_crawler import HistoryFinancialListCrawler, HistoryFinancialCrawler
 from pytdx.hq import TdxHq_API
 from pytdx.params import TDXParams
 from tqdm import tqdm
@@ -14,7 +17,12 @@ from utils import tz_cn, get_recent_trading_day
 
 api = TdxHq_API()
 
-_stocklist_save_path = Path(__file__).parent / 'stocklist.tdx.csv'
+_stocklist_save_path = Path(__file__).parent / '_cache' / 'stocklist.tdx.csv'
+financial_list_checksum_path = Path(__file__).parent / '_cache' / 'financial.checksum.csv'
+financial_archive_dir = Path(__file__).parent / '_cache' / 'financials'
+financial_archive_dir.mkdir(exist_ok=True, parents=True)
+
+
 tdx_kline_type = {
     '1m': TDXParams.KLINE_TYPE_1MIN,
     '5m': TDXParams.KLINE_TYPE_5MIN,
@@ -146,21 +154,89 @@ def update_stock_candlesticks(stock: Stock, interval: str= '1d'):
 
 
 def update_supply(stock: Stock):
+    """ 获取股票当前流通股本和总股本并更新数据 """
     with api.connect(best_host[1], best_host[2]):
         data = api.to_df(api.get_finance_info(stock.market.value, stock.symbol))
+        print(data)
         circulating_supply = data.iloc[0].liutongguben
         total_supply = data.iloc[0].zongguben
+        print(f"{total_supply:,} {circulating_supply:,}")
         recent_trading_day = get_recent_trading_day(offline=False)
         write_supply(stock, total_supply, circulating_supply, recent_trading_day)
+
+
+def parse_financial_date(filename: str):
+    pattern = "(?<=gpcw)\d{8}"
+    matches = re.findall(pattern, filename)
+    date_str = matches[0]
+    financial_datetime = datetime.strptime(date_str, "%Y%m%d").replace(hour=15, tzinfo=tz_cn)
+    return financial_datetime
+
+
+def is_financial_updated(filename, hash):
+    if os.path.exists(str(financial_list_checksum_path)):
+        checksum = pd.read_csv(str(financial_list_checksum_path))
+        record = checksum[checksum['filename'] == filename]
+        if len(record) != 1:
+            return False
+        recorded_hash = record.iloc[0]['hash']
+        logging.debug(f"Financial file {filename} recorded hash and current hash: \n"
+                      f"{recorded_hash} {hash}\n"
+                      f"diff = {recorded_hash == hash}")
+        return recorded_hash != hash
+        # return (record['hash'] != hash).all().item()
+    return True
+
+
+def save_supply_history(financials, stocks, financial_datetime):
+    for stock in stocks:
+        if stock.code != "002273":
+            continue
+        try:
+            report = financials.loc[stock.code]
+        except KeyError:
+            continue
+        total_supply = report.loc['col238']
+        circulating_supply = report.loc['col266']
+        if circulating_supply == 0 and total_supply != 0:
+            circulating_supply = total_supply
+        write_supply(stock, total_supply, circulating_supply, financial_datetime)
+        break
+
+
+def update_supply_history():
+    """ 通过下载历史财务数据补充过去股本数据 """
+    list_crawler = HistoryFinancialListCrawler()
+    financial_list = pd.DataFrame(list_crawler.fetch_and_parse())
+    data_crawler = HistoryFinancialCrawler()
+    stocks = get_stock_list()
+    for i, (idx, row) in enumerate(financial_list.iterrows()):
+        logging.info(f"正在处理历史财务数据文件({i + 1}/{len(financial_list)}): {row.filename}")
+        financial_datetime = parse_financial_date(row.filename)
+        if financial_datetime > datetime.now(tz_cn):
+            continue
+        if not is_financial_updated(row.filename, row.hash):
+            continue
+        download_path = financial_archive_dir / row.filename
+        financials = data_crawler.fetch_and_parse(
+            filename=row.filename,
+            download_path=str(download_path),
+            filesize=row.filesize
+        )
+        financials = data_crawler.to_df(financials)
+        if financials is None:
+            continue
+        save_supply_history(financials, stocks=stocks, financial_datetime=financial_datetime)
+    financial_list.to_csv(str(financial_list_checksum_path), index=False)
 
 
 if __name__ == '__main__':
     pd.set_option("display.max_columns", None)
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format='%(asctime)s %(levelname)s %(filename)s:%(lineno)s %(message)s',
         force=True
     )
-    # update_candlesticks(interval='1d')
-    stock = Stock(code='002273', market="SZ")
-    update_supply(stock)
+    stock = Stock("688420", 'SH')
+    # update_supply(stock)
+    update_supply_history()
