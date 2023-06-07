@@ -3,8 +3,8 @@ import os
 import tushare
 from dotenv import load_dotenv
 
-from data_management.consts import Stock
-from utils import get_recent_trading_day
+from market.consts import Stock
+from market.utils import get_recent_trading_day
 
 load_dotenv()
 TOKEN = os.environ.get("TUSHARE_TOKEN")

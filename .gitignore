@@ -9,5 +9,5 @@ __pycache__/
 *.log
 play.py
 *.zip
-data_management/_cache/
-data_management/notes/
+market/_cache/
+market/notes/

@@ -1,7 +1,7 @@
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -11,10 +11,10 @@ from pytdx.params import TDXParams
 from pytdx.reader import HistoryFinancialReader
 from tqdm import tqdm
 
-from data_management import best_host
-from data_management.consts import Stock, MARKET
-from data_management.influx_engine import get_recent_candlestick_record, write_candlesticks, write_supply
-from utils import tz_cn, get_recent_trading_day
+from market import best_host
+from consts import Stock, MARKET
+from .influx_engine import get_recent_candlestick_record, write_candlesticks, write_supply
+from market.utils import tz_cn, tz_utc
 
 api = TdxHq_API()
 
@@ -72,6 +72,67 @@ def parse_code_type(code: str, market: MARKET):
             return 'undefined'
 
 
+def _get_recent_trading_day(check_date: datetime=None, offline=False) -> datetime:
+    ''' 获取最近一个交易日 '''
+    if check_date is None:
+        check_date = datetime.now(tz_cn)
+
+    if offline:
+        # 如果是离线模式，简单通过是否为周末判断
+        if check_date.weekday() in [5, 6]:
+            return _get_recent_trading_day(
+                check_date.replace(hour=15, minute=0, second=0, microsecond=0) - timedelta(days=1), offline=offline)
+        if check_date.hour >= 15:
+            return check_date.replace(hour=15, minute=0, second=0, microsecond=0)
+        return (check_date - timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0)
+
+    # 如果是在线模式，通过通达信获取上证指数行情，找到最近的交易日
+    _api = TdxHq_API()
+    with _api.connect(best_host[1], best_host[2]):
+        ex, code = 1, "000001"
+        pointer = 0
+        while True:
+            res = _api.to_df(_api.get_index_bars(9, ex, code, pointer, 800))
+            if res.empty:
+                break
+            res["datetime"] = res["datetime"].apply(
+                lambda dt_str: datetime.strptime(dt_str, "%Y-%m-%d %H:%M").replace(tzinfo=tz_cn)
+            )
+            # find the first row whose datetime is less than or equal to check_date
+            # and return the date of the previous row
+            try:
+                return res[res["datetime"] <= check_date].iloc[-1]["datetime"]
+            except IndexError:
+                pass
+            pointer += 800
+        return datetime(1970, 1, 1, tzinfo=tz_utc)
+
+
+def get_recent_trading_day_generator():
+    ts = datetime.now(tz_cn)
+    _cache = {}
+
+    def inner(check_date: datetime=None, offline=False):
+        nonlocal ts, _cache
+        if check_date is None:
+            check_date_str = "current"
+        else:
+            check_date_str = check_date.strftime("%Y-%m-%d")
+        if check_date_str not in _cache:
+            result = _get_recent_trading_day(check_date, offline)
+            _cache[check_date_str] = result
+            ts = datetime.now(tz_cn)
+        if datetime.now(tz_cn) > ts + timedelta(hours=2):
+            ts = datetime.now(tz_cn)
+            result = _get_recent_trading_day(check_date, offline)
+            _cache[check_date_str] = result
+        return _cache[check_date_str]
+
+    return inner
+
+get_recent_trading_day = get_recent_trading_day_generator()
+
+
 def update_security_list():
     with api.connect(best_host[1], best_host[2]):
         data = pd.concat([
@@ -106,15 +167,16 @@ def get_stock_list():
 
 def update_candlesticks(interval: str='1d'):
     stock_list = get_stock_list()
-    with api.connect(best_host[1], best_host[2]):
-        for stock in tqdm(stock_list):
+    if api.connect(best_host[1], best_host[2]):
+        for stock in tqdm(stock_list, desc=f"更新 {interval} K线数据"):
             update_stock_candlesticks(stock, interval=interval)
+        api.disconnect()
 
 
 def update_stock_candlesticks(stock: Stock, interval: str= '1d'):
-    tick = datetime.now()
+    tick = datetime.now(tz_cn)
     recent_candle: pd.Series = get_recent_candlestick_record(stock.symbol, interval)
-    read_elapse = datetime.now() - tick
+    read_elapse = datetime.now(tz_cn) - tick
     if recent_candle is None:
         recent_datetime = datetime(1998, 1, 1, 0, 0, 0, tzinfo=tz_cn)
     else:
@@ -124,10 +186,10 @@ def update_stock_candlesticks(stock: Stock, interval: str= '1d'):
         return
     logging.debug(f"更新 {stock.symbol} {interval} 数据，最近更新时间为 {recent_datetime}")
     ohlcv = []
-    pointer = 0
-    tick = datetime.now()
+    pointer = 0 if tick.hour >= 15 else 1
+    tick = datetime.now(tz_cn)
     while True:
-        data_list = api.get_security_bars(tdx_kline_type[interval], stock.market.value, stock.symbol, pointer, 800)
+        data_list = api.get_security_bars(tdx_kline_type[interval], stock.market.value, stock.code, pointer, 800)
         data = api.to_df(data_list)
         if len(data) == 0 or data is None or data.empty or data_list is None or len(data_list) == 0:
             break
@@ -140,17 +202,17 @@ def update_stock_candlesticks(stock: Stock, interval: str= '1d'):
     try:
         ohlcv['datetime'] = ohlcv['datetime'].apply(lambda s: datetime.strptime(s, "%Y-%m-%d %H:%M").replace(tzinfo=tz_cn))
     except Exception as e:
-        logging.error(f"Error {e}: stock = {stock} ohlcv = {ohlcv}")
+        logging.error(f"Error {e}: stock = {stock.code} ohlcv = {ohlcv}")
         return
     # sort ohlcv by datetime field
     ohlcv = ohlcv.sort_values(by='datetime', ascending=True)
     # drop columns except datetime, open, high, low, close, vol, amount
     ohlcv = ohlcv.loc[:, ['datetime', 'open', 'high', 'low', 'close', 'vol', 'amount']]
 #         save the ohlcv dataframe to influxdb
-    download_elapse = datetime.now() - tick
-    tick = datetime.now()
+    download_elapse = datetime.now(tz_cn) - tick
+    tick = datetime.now(tz_cn)
     write_candlesticks(stock, interval, ohlcv)
-    write_elapse = datetime.now() - tick
+    write_elapse = datetime.now(tz_cn) - tick
     logging.debug(f"读取历史数据耗时 {read_elapse}, 下载数据耗时 {download_elapse}, 写入数据耗时 {write_elapse}")
 
 
@@ -233,6 +295,6 @@ if __name__ == '__main__':
         format='%(asctime)s %(levelname)s %(filename)s:%(lineno)s %(message)s',
         force=True
     )
-    stock = Stock("688420", 'SH')
-    # update_supply(stock)
-    update_supply_history()
+    # stock = Stock("688420", 'SH')
+    # # update_supply(stock)
+    # update_supply_history()

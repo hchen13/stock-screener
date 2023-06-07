@@ -7,8 +7,8 @@ import pandas as pd
 from aioinflux import InfluxDBClient
 from dotenv import load_dotenv
 
-from data_management.consts import Stock
-from utils import check_environment
+from consts import Stock
+from market.utils import check_environment
 
 load_dotenv()
 
